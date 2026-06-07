@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { SearchIcon, GlobeIcon, FileSearchIcon, BrainIcon, CheckCircleIcon, AlertCircle, Loader2, ArrowRightIcon } from "lucide-react";
+import { fetchPageHtml, parseHtmlContent, generateAnalysisReport } from "../assets/seoScraper";
+import { useUser } from "../context/UserContext";
 
 const STEPS = [
     { icon: <GlobeIcon size={22} />, label: "Connecting to browser", desc: "Creating cloud browser session..." },
@@ -12,7 +14,9 @@ const STEPS = [
 ];
 
 export default function Analyze() {
+    const { user } = useUser();
     const [url, setUrl] = useState("");
+
     const [analyzing, setAnalyzing] = useState(false);
     const [currentStep, setCurrentStep] = useState(0);
     const [error, setError] = useState("");
@@ -29,14 +33,50 @@ export default function Analyze() {
         setAnalyzing(true);
         setCurrentStep(0);
 
-        setTimeout(() => setCurrentStep(1), 1000);
-        setTimeout(() => setCurrentStep(2), 3000);
-        setTimeout(() => setCurrentStep(3), 6000);
-        setTimeout(() => {
+        try {
+            // Step 0: Connecting (brief delay for visual feel)
+            await new Promise((resolve) => setTimeout(resolve, 800));
+
+            // Step 1: Scanning / Fetching
+            setCurrentStep(1);
+            const { html, loadTime, statusCode } = await fetchPageHtml(targetUrl);
+
+            // Step 2: Parsing & Analysing
+            setCurrentStep(2);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            const scraped = parseHtmlContent(html, targetUrl, loadTime, statusCode);
+            const report = generateAnalysisReport(scraped);
+            if (user) {
+                (report as any).userEmail = user.email;
+            }
+
+            // Step 3: Saving & Finalizing
+            setCurrentStep(3);
+            await new Promise((resolve) => setTimeout(resolve, 600));
+
+            // Save to localStorage
+            const existingRaw = localStorage.getItem("seo_tracker_analyses");
+            const existing = existingRaw ? JSON.parse(existingRaw) : [];
+            // Check if URL already exists and remove it to avoid duplicates, keeping the newest scan at top
+            // Filter by userEmail to allow multiple users to scan the same URL independently
+            const filtered = existing.filter((item: any) => {
+                const sameUrl = item.url.toLowerCase() === targetUrl.toLowerCase();
+                const sameUser = item.userEmail === (user?.email || "");
+                return !(sameUrl && sameUser);
+            });
+            const updated = [report, ...filtered];
+            localStorage.setItem("seo_tracker_analyses", JSON.stringify(updated));
+
+
             setAnalyzing(false);
-            navigate(`/report/id123`);
-        }, 8000);
+            navigate(`/report/${report._id}`);
+        } catch (err: any) {
+            console.error("Scraping failed: ", err);
+            setError(err.message || "Could not fetch or parse the website. Please check the URL and your connection.");
+            setAnalyzing(false);
+        }
     };
+
 
     const handleSubmit = (e: React.SubmitEvent) => {
         e.preventDefault();

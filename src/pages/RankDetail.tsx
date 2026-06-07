@@ -2,7 +2,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Target, Globe, Clock, TrendingUp, TrendingDown, Minus, RefreshCw, AlertCircle, ExternalLink, Trophy, Users, Calendar, Loader2 } from "lucide-react";
-import { dummyWebsiteRanking } from "../assets/assets";
+import { checkKeywordRank } from "../assets/rankChecker";
+import { useUser } from "../context/UserContext";
+
 
 interface RankHistoryEntry {
     date: string;
@@ -36,8 +38,8 @@ interface TrackingData {
     status: string;
     createdAt: string;
 }
-
 export default function RankDetail() {
+    const { user } = useUser();
     const { id } = useParams();
     const [tracking, setTracking] = useState<TrackingData | null>(null);
     const [loading, setLoading] = useState(true);
@@ -46,19 +48,84 @@ export default function RankDetail() {
     const chartRef = useRef<HTMLCanvasElement>(null);
 
     const fetchTracking = async () => {
-        setTimeout(() => {
-            setTracking(dummyWebsiteRanking);
+        setLoading(true);
+        try {
+            const raw = localStorage.getItem("seo_tracker_rankings");
+            const list = raw ? JSON.parse(raw) : [];
+            const found = list.find((item: any) => item._id === id && (user?.role === "admin" || item.userEmail === user?.email));
+
+            if (found) {
+                setTracking(found);
+            } else {
+                setTracking(null);
+            }
+        } catch (err) {
+            console.error("Failed to load tracking: ", err);
+            setTracking(null);
+        } finally {
             setLoading(false);
-        }, 1000);
+        }
     };
 
     const handleRefresh = async () => {
         if (!tracking) return;
         setRefreshing(true);
-        setTimeout(() => {
-            setTracking(dummyWebsiteRanking);
+        try {
+            const result = await checkKeywordRank(tracking.keyword, tracking.url);
+            const matches = result.competitors.find(c => c.domain.toLowerCase() === tracking.domain.toLowerCase());
+
+            let change = 0;
+            if (tracking.currentPosition !== null && result.currentPosition !== null) {
+                change = tracking.currentPosition - result.currentPosition;
+            }
+
+            const updatedHistory = [
+                ...(tracking.rankHistory || []),
+                {
+                    date: result.lastChecked,
+                    position: result.currentPosition,
+                    page: result.currentPage,
+                    title: matches?.title || "",
+                    snippet: matches?.snippet || ""
+                }
+            ];
+
+            const updatedBest = tracking.bestPosition === null
+                ? result.currentPosition
+                : result.currentPosition === null
+                    ? tracking.bestPosition
+                    : Math.min(tracking.bestPosition, result.currentPosition);
+
+            const updatedItem = {
+                ...tracking,
+                currentPosition: result.currentPosition,
+                currentPage: result.currentPage,
+                bestPosition: updatedBest,
+                positionChange: change,
+                lastChecked: result.lastChecked,
+                status: "completed",
+                competitors: result.competitors,
+                rankHistory: updatedHistory
+            };
+
+            const raw = localStorage.getItem("seo_tracker_rankings");
+            const list = raw ? JSON.parse(raw) : [];
+            const idx = list.findIndex((k: any) => k._id === tracking._id);
+            if (idx !== -1) {
+                list[idx] = updatedItem;
+                localStorage.setItem("seo_tracker_rankings", JSON.stringify(list));
+            } else {
+                const newList = [updatedItem, ...list];
+                localStorage.setItem("seo_tracker_rankings", JSON.stringify(newList));
+            }
+
+            setTracking(updatedItem);
+        } catch (err) {
+            console.error("Failed to refresh: ", err);
+            alert("Refresh failed. The search service might be rate limited.");
+        } finally {
             setRefreshing(false);
-        }, 1000);
+        }
     };
 
     const drawChart = () => {
@@ -211,12 +278,14 @@ export default function RankDetail() {
 
     useEffect(() => {
         (async () => await fetchTracking())();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
 
     useEffect(() => {
         if (tracking && tracking.rankHistory.length > 0 && chartRef.current) {
             drawChart();
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tracking, activeTab]);
 
     if (loading) {

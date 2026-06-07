@@ -9,6 +9,7 @@ import Report from "./pages/Report";
 import History from "./pages/History";
 import RankTracker from "./pages/RankTracker";
 import RankDetail from "./pages/RankDetail";
+import AdminDashboard from "./pages/AdminDashboard";
 import { Toaster } from "react-hot-toast";
 
 export default function App() {
@@ -32,7 +33,11 @@ export default function App() {
                     <Route path="/rank-tracker" element={<RankTracker />} />
                     <Route path="/rank/:id" element={<RankDetail />} />
                 </Route>
+                <Route element={<ProtectedRoute adminOnly />}>
+                    <Route path="/admin" element={<AdminDashboard />} />
+                </Route>
             </Routes>
         </>
     );
 }
+

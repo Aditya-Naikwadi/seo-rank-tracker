@@ -1,8 +1,9 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Clock, Trash2, ExternalLink, Search, AlertCircle, Loader2, Filter, ArrowUpDown } from "lucide-react";
 import ScoreGauge from "../components/ScoreGauge";
-import { dummyAnalysisData } from "../assets/assets";
+import { useUser } from "../context/UserContext";
 
 interface AnalysisItem {
     _id: string;
@@ -16,10 +17,13 @@ interface AnalysisItem {
         accessibility: number;
         bestPractices: number;
     };
+    userEmail?: string;
 }
 
 export default function History() {
+    const { user } = useUser();
     const [analyses, setAnalyses] = useState<AnalysisItem[]>([]);
+
     const [loading, setLoading] = useState(true);
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
@@ -30,19 +34,39 @@ export default function History() {
 
     const fetchAnalyses = async () => {
         setLoading(true);
-        setTimeout(() => {
-            setAnalyses(dummyAnalysisData);
+        try {
+            const customRaw = localStorage.getItem("seo_tracker_analyses");
+            const customList = customRaw ? JSON.parse(customRaw) : [];
+            const userEmail = user?.email || "";
+            // Filter by current user
+            const filtered = customList.filter((item: any) => item.userEmail === userEmail);
+            setAnalyses(filtered);
             setTotalPages(1);
+
+        } catch (err) {
+            console.error("Failed to load history analyses: ", err);
+            setAnalyses([]);
+        } finally {
             setLoading(false);
-        }, 1000);
+        }
     };
 
     const handleDelete = async (id: string) => {
         if (!confirm("Delete this analysis?")) return;
         setDeleting(id);
-        setTimeout(() => {
+        try {
+            const customRaw = localStorage.getItem("seo_tracker_analyses");
+            if (customRaw) {
+                const customList = JSON.parse(customRaw);
+                const filteredCustom = customList.filter((item: { _id: string }) => item._id !== id);
+                localStorage.setItem("seo_tracker_analyses", JSON.stringify(filteredCustom));
+            }
+            setAnalyses(prev => prev.filter(a => a._id !== id));
+        } catch (err) {
+            console.error("Failed to delete analysis: ", err);
+        } finally {
             setDeleting(null);
-        }, 1000);
+        }
     };
 
     const getScoreClass = (s: number) => {
@@ -76,6 +100,7 @@ export default function History() {
 
     useEffect(() => {
         (async () => await fetchAnalyses())();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [page]);
 
     return (

@@ -1,9 +1,11 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import ScoreGauge from "../components/ScoreGauge";
 import IssueCard from "../components/IssueCard";
 import { ArrowLeft, Globe, Clock, FileText, Image, Link2, Heading, Tag, AlertCircle, ExternalLink, Type, Search } from "lucide-react";
-import { dummyWebsiteAnalysis } from "../assets/assets";
+import { useUser } from "../context/UserContext";
+
 
 interface AnalysisData {
     _id: string;
@@ -56,17 +58,31 @@ interface AnalysisData {
 }
 
 export default function Report() {
+    const { user } = useUser();
     const { id } = useParams();
     const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
     const [loading, setLoading] = useState(true);
-    const [error] = useState("");
+    const [error, setError] = useState("");
     const [activeTab, setActiveTab] = useState("overview");
 
     const fetchAnalysis = async () => {
-        setTimeout(() => {
-            setAnalysis(dummyWebsiteAnalysis);
+        setLoading(true);
+        try {
+            const existingRaw = localStorage.getItem("seo_tracker_analyses");
+            const existing = existingRaw ? JSON.parse(existingRaw) : [];
+            const found = existing.find((item: any) => item._id === id && (user?.role === "admin" || item.userEmail === user?.email));
+
+            if (found) {
+                setAnalysis(found);
+            } else {
+                setError("The requested SEO report could not be found.");
+            }
+        } catch (err) {
+            console.error("Failed to load analysis: ", err);
+            setError("An error occurred while loading the analysis.");
+        } finally {
             setLoading(false);
-        }, 1500);
+        }
     };
 
     const getScoreClass = (s: number) => {
@@ -90,6 +106,7 @@ export default function Report() {
 
     useEffect(() => {
         (async () => await fetchAnalysis())();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
 
     if (loading) {

@@ -2,7 +2,8 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Target, Plus, RefreshCw, Trash2, TrendingUp, TrendingDown, Minus, ExternalLink, Clock, Loader2, X, Search, Globe, AlertCircle, Eye, EyeOff, Filter, ArrowUpDown } from "lucide-react";
-import { dummyRankings } from "../assets/assets";
+import { checkKeywordRank, getDomainName } from "../assets/rankChecker";
+import { useUser } from "../context/UserContext";
 
 interface KeywordItem {
     _id: string;
@@ -17,10 +18,14 @@ interface KeywordItem {
     lastChecked: string | null;
     status: string;
     competitors: { position: number; url: string; domain: string; title: string; snippet: string }[];
+    rankHistory?: { date: string; position: number | null; page: number | null; title: string; snippet: string }[];
+    userEmail?: string;
 }
 
 export default function RankTracker() {
+    const { user } = useUser();
     const [keywords, setKeywords] = useState<KeywordItem[]>([]);
+
     const [loading, setLoading] = useState(true);
     const [showAddModal, setShowAddModal] = useState(false);
     const [newKeyword, setNewKeyword] = useState("");
@@ -34,39 +39,161 @@ export default function RankTracker() {
     const [sortBy, setSortBy] = useState("newest");
 
     const fetchKeywords = async () => {
-        setTimeout(() => {
-            setKeywords(dummyRankings);
+        try {
+            const raw = localStorage.getItem("seo_tracker_rankings");
+            const list = raw ? JSON.parse(raw) : [];
+            const userEmail = user?.email || "";
+            const filtered = list.filter((item: any) => item.userEmail === userEmail);
+            setKeywords(filtered);
+        } catch (err) {
+            console.error("Failed to load rankings: ", err);
+            setKeywords([]);
+        } finally {
             setLoading(false);
-        }, 1000);
+        }
     };
 
-    const handleAdd = async (e: React.SubmitEvent) => {
+    const handleAdd = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!newKeyword.trim() || !newUrl.trim()) return;
+
         setAdding(true);
-        setTimeout(() => {
+        setAddError("");
+
+        try {
+            const targetDomain = getDomainName(newUrl);
+            const result = await checkKeywordRank(newKeyword, newUrl);
+            
+            const matches = result.competitors.find(c => c.domain.toLowerCase() === targetDomain.toLowerCase());
+
+            const newItem: KeywordItem = {
+                _id: Math.random().toString(36).substring(2, 10),
+                keyword: newKeyword.trim(),
+                url: newUrl.startsWith("http") ? newUrl.trim() : "https://" + newUrl.trim(),
+                domain: targetDomain,
+                currentPosition: result.currentPosition,
+                currentPage: result.currentPage,
+                bestPosition: result.currentPosition,
+                positionChange: 0,
+                active: true,
+                lastChecked: result.lastChecked,
+                status: "completed",
+                competitors: result.competitors,
+                userEmail: user?.email || "",
+                rankHistory: [
+                    {
+                        date: result.lastChecked,
+                        position: result.currentPosition,
+                        page: result.currentPage,
+                        title: matches?.title || "",
+                        snippet: matches?.snippet || ""
+                    }
+                ]
+            };
+
+            const rawList = localStorage.getItem("seo_tracker_rankings");
+            const list = rawList ? JSON.parse(rawList) : [];
+            const updatedAll = [newItem, ...list];
+            localStorage.setItem("seo_tracker_rankings", JSON.stringify(updatedAll));
+            setKeywords([newItem, ...keywords]);
+
+            setNewKeyword("");
+            setNewUrl("");
             setShowAddModal(false);
+        } catch (err: any) {
+            console.error("Failed to add keyword: ", err);
+            setAddError(err.message || "Search lookup failed. Please try again.");
+        } finally {
             setAdding(false);
-        }, 1000);
+        }
     };
 
     const handleRefresh = async (id: string) => {
         setRefreshing(id);
-        setTimeout(() => {
+        try {
+            const rawList = localStorage.getItem("seo_tracker_rankings");
+            const allKeywords = rawList ? JSON.parse(rawList) : [];
+            const idx = allKeywords.findIndex((k: any) => k._id === id);
+            if (idx === -1) return;
+
+            const item = allKeywords[idx];
+            const result = await checkKeywordRank(item.keyword, item.url);
+            const matches = result.competitors.find(c => c.domain.toLowerCase() === item.domain.toLowerCase());
+
+            let change = 0;
+            if (item.currentPosition !== null && result.currentPosition !== null) {
+                change = item.currentPosition - result.currentPosition;
+            }
+
+            const updatedHistory = [
+                ...(item.rankHistory || []),
+                {
+                    date: result.lastChecked,
+                    position: result.currentPosition,
+                    page: result.currentPage,
+                    title: matches?.title || "",
+                    snippet: matches?.snippet || ""
+                }
+            ];
+
+            const updatedBest = item.bestPosition === null
+                ? result.currentPosition
+                : result.currentPosition === null
+                    ? item.bestPosition
+                    : Math.min(item.bestPosition, result.currentPosition);
+
+            const updatedItem = {
+                ...item,
+                currentPosition: result.currentPosition,
+                currentPage: result.currentPage,
+                bestPosition: updatedBest,
+                positionChange: change,
+                lastChecked: result.lastChecked,
+                status: "completed",
+                competitors: result.competitors,
+                rankHistory: updatedHistory
+            };
+
+            const updatedAll = allKeywords.map((k: any) => k._id === id ? updatedItem : k);
+            localStorage.setItem("seo_tracker_rankings", JSON.stringify(updatedAll));
+            setKeywords(prev => prev.map(k => k._id === id ? updatedItem : k));
+        } catch (err) {
+            console.error("Failed to refresh rank: ", err);
+            alert("Refresh failed. Search index might be rate limited.");
+        } finally {
             setRefreshing(null);
-        }, 1000);
+        }
     };
 
     const handleDelete = async (id: string) => {
         if (!confirm("Delete this keyword tracking?")) return;
         setDeleting(id);
-        setTimeout(() => {
+        try {
+            const rawList = localStorage.getItem("seo_tracker_rankings");
+            const allKeywords = rawList ? JSON.parse(rawList) : [];
+            const filteredAll = allKeywords.filter((k: any) => k._id !== id);
+            localStorage.setItem("seo_tracker_rankings", JSON.stringify(filteredAll));
+            setKeywords(prev => prev.filter(k => k._id !== id));
+        } catch (err) {
+            console.error(err);
+        } finally {
             setDeleting(null);
-        }, 1000);
+        }
     };
 
     const handleToggle = async (id: string) => {
-        console.log(id);
+        const rawList = localStorage.getItem("seo_tracker_rankings");
+        const allKeywords = rawList ? JSON.parse(rawList) : [];
+        const updatedAll = allKeywords.map((k: any) => {
+            if (k._id === id) {
+                return { ...k, active: !k.active };
+            }
+            return k;
+        });
+        localStorage.setItem("seo_tracker_rankings", JSON.stringify(updatedAll));
+        setKeywords(prev => prev.map(k => k._id === id ? { ...k, active: !k.active } : k));
     };
+
 
     const getPositionBadge = (pos: number | null) => {
         if (pos === null) return { text: "Not Ranked", class: "text-muted-foreground bg-muted/50" };
@@ -111,6 +238,7 @@ export default function RankTracker() {
 
     useEffect(() => {
         (async () => await fetchKeywords())();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     return (
